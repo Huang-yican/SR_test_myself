@@ -1,177 +1,41 @@
-# SRGAN
-A PyTorch implementation of SRGAN based on CVPR 2017 paper 
-[Photo-Realistic Single Image Super-Resolution Using a Generative Adversarial Network](https://arxiv.org/abs/1609.04802).
+# SRGAN相关变种实验总结
+## SRGAN结构模型
+[![pSqvMEn.png](https://s1.ax1x.com/2023/02/18/pSqvMEn.png)](https://imgse.com/i/pSqvMEn)
+- 上面为生成器，backbone是residual blocks（Resnet)，LR（也就是低分辨率图像)输入之后，先通过一个卷积进行粗级特征提取，然后通过一系列的residual blocks进行细节特征的学习，有一个long skit connnection，最后对得到的特征图进行亚像素卷积操作、卷积重建，图像分辨率提高，G网络输出的也就是SR。
+- 下面为判别器
+- 网络的损失主要由三部分组成
+![d285b479b26cb5a2d36615310fc891f5.png](:/10eb8ca1cc60432c8c7455bbf8c4eb2d)
 
-## Requirements
-- [Anaconda](https://www.anaconda.com/download/)
-- PyTorch
-```
-conda install pytorch torchvision -c pytorch
-```
-- opencv
-```
-conda install opencv
-```
+## 实验部分
+- 我的实验主要是由于以下的几个出发点去实现的：
+1.ESR，也就是efficient super resolution，高效的SR，通常就是跟模型的轻量化、模型推理的加快（模型方面）相联系
+2.打板指标的提高
+3.考虑边缘信息
+### 实验实现细节
+&emsp;&emsp;**ESR**目前来说，主流的ESR实现的方法有两种，主要是”蒸馏“的思想（SR网络中很多的特征图都有冗余的信息，直接平等对待需要很多的计算量而性能提高并不明显）、结构重参数化（复杂的分支运算融合为一个简单的卷积操作，最早提出于2021年的repvgg）==在实验中，我采用的是结构重参数化==。尝试了repvgg、ECB等模块与原来SRGAN中的residual blocks进行对比实验。
+&emsp;&emsp;**打板指标的提高**，对于提高SR的评价指标PSNR、SSIM等，可以从很多方面入手，一个是加深网络（如densenet）、多尺度SR（利用输入图像的不同尺度进行特征融合）、注意力机制（通道注意力CA、空间注意力SA等）、利用其他先验知识（如梯度先验、边缘先验）。==在实验中，我使用的是ESA增强的空间注意力机制==
+![64897a0384ba4f27fd1e06f45ce7110a.png](:/edbd5185267043598094f1ba60b97d4e)
+（如图是ESA的结构）
+&emsp;&emsp;**边缘信息的利用**，边缘信息可以作为一个很有效的先验知识辅助完成图像恢复等任务，在现有地边缘信息地利用有以下几种：loss中考虑边缘loss；采用边缘监督地方法；将边缘信息作为一种先验传入网络之中（目前还没看到关于边缘监督的SR相关综述，所以我是看了几篇有代表性的利用到边缘信息进行SR的文章，自己进行总结）==实验中，我采用的是ECB这个block，他在基础的特征提取块中加入了一阶、二阶的边缘提取算子。==
+![3b5ae2d013617ca2944e1e55df157981.png](:/06d7421ac966422687477221dd72f82e)
+（如图是ECB的结构，它可以在特征提取的时候引入边缘信息的同时，也可以实现结构重参数化）
 
-## Datasets
+### 实验结果
+![4280c9bc74b4150409f045089bdb0249.png](:/05b82d2c53d54318b05f6b7adf1802af)
+&emsp;&emsp;其中，**时间**这一列中，绿色的是在3060上的推理时间，红色的是在3090上的推理时间。**PSNR**这一列中，括号（）中的是使用大的数据集（5w多张），而正常情况下是使用的voc2012数据集（1.7w多张）
+- 绿色椭圆说明ESA对SR的性能提高是很重要的
+- 红色矩形是一个让我意外的点，因为使用大的数据集反而效果降低了
+### 改进
+&emsp;&emsp;由实验的结果可以较清楚的看到网络生成的SR图像由伪影的出现（查看相关资料，可能的原因的生成网络中的批归一化层以及使用的L2损失来计算像素级别的损失），所以我改进了网络，将L2改为L1，同时，将内容损失的基础特征提取网络由VGG改为UNet，效果较为显著，下面是在LED数据集上的推理结果。
+![0e55d39b74d2b7a163f8693b32548bc6.png](:/345818ebbaa74eaaaa8fa25439bec610)
+### 存在的问题
+&emsp;&emsp;目前还疑惑的问题是我的建模过程似乎不能代替miniLED这个实际数据集在工业环境下的退化过程，导致超分辨的效果并不明显，我的==LR数据集构建只是下采样+高斯卷积模糊==。
 
-### Train、Val Dataset
-The train and val datasets are sampled from [VOC2012](http://cvlab.postech.ac.kr/~mooyeol/pascal_voc_2012/).
-Train dataset has 16700 images and Val dataset has 425 images.
-Download the datasets from [here](https://pan.baidu.com/s/1xuFperu2WiYc5-_QXBemlA)(access code:5tzp), and then extract it into `data` directory.
-
-### Test Image Dataset
-The test image dataset are sampled from 
-| **Set 5** |  [Bevilacqua et al. BMVC 2012](http://people.rennes.inria.fr/Aline.Roumy/results/SR_BMVC12.html)
-| **Set 14** |  [Zeyde et al. LNCS 2010](https://sites.google.com/site/romanzeyde/research-interests)
-| **BSD 100** | [Martin et al. ICCV 2001](https://www.eecs.berkeley.edu/Research/Projects/CS/vision/bsds/)
-| **Sun-Hays 80** | [Sun and Hays ICCP 2012](http://cs.brown.edu/~lbsun/SRproj2012/SR_iccp2012.html)
-| **Urban 100** | [Huang et al. CVPR 2015](https://sites.google.com/site/jbhuang0604/publications/struct_sr).
-Download the image dataset from [here](https://pan.baidu.com/s/1vGosnyal21wGgVffriL1VQ)(access code:xwhy), and then extract it into `data` directory.
-
-### Test Video Dataset
-The test video dataset are three trailers. Download the video dataset from 
-[here](https://pan.baidu.com/s/1HB1u-2rkMjX7cVtwNtfWjQ)(access code:956d).
-
-## Usage
-
-### Train
-```
-python train.py
-
-optional arguments:
---crop_size                   training images crop size [default value is 88]
---upscale_factor              super resolution upscale factor [default value is 4](choices:[2, 4, 8])
---num_epochs                  train epoch number [default value is 100]
-```
-The output val super resolution images are on `training_results` directory.
-
-### Test Benchmark Datasets
-```
-python test_benchmark.py
-
-optional arguments:
---upscale_factor              super resolution upscale factor [default value is 4]
---model_name                  generator model epoch name [default value is netG_epoch_4_100.pth]
-```
-The output super resolution images are on `benchmark_results` directory.
-
-### Test Single Image
-```
-python test_image.py
-
-optional arguments:
---upscale_factor              super resolution upscale factor [default value is 4]
---test_mode                   using GPU or CPU [default value is 'GPU'](choices:['GPU', 'CPU'])
---image_name                  test low resolution image name
---model_name                  generator model epoch name [default value is netG_epoch_4_100.pth]
-```
-The output super resolution image are on the same directory.
-
-### Test Single Video
-```
-python test_video.py
-
-optional arguments:
---upscale_factor              super resolution upscale factor [default value is 4]
---video_name                  test low resolution video name
---model_name                  generator model epoch name [default value is netG_epoch_4_100.pth]
-```
-The output super resolution video and compared video are on the same directory.
-
-## Benchmarks
-**Upscale Factor = 2**
-
-Epochs with batch size of 64 takes ~2 minute 30 seconds on a NVIDIA GTX 1080Ti GPU. 
-
-> Image Results
-
-The left is bicubic interpolation image, the middle is high resolution image, and 
-the right is super resolution image(output of the SRGAN).
-
-- BSD100_070(PSNR:32.4517; SSIM:0.9191)
-
-![BSD100_070](images/1.png)
-
-- Set14_005(PSNR:26.9171; SSIM:0.9119)
-
-![Set14_005](images/2.png)
-
-- Set14_013(PSNR:30.8040; SSIM:0.9651)
-
-![Set14_013](images/3.png)
-
-- Urban100_098(PSNR:24.3765; SSIM:0.7855)
-
-![Urban100_098](images/4.png)
-
-> Video Results
-
-The left is bicubic interpolation video, the right is super resolution video(output of the SRGAN).
-
-[![Watch the video](images/video_SRF_2.png)](https://youtu.be/05vx-vOJOZs)
-
-**Upscale Factor = 4**
-
-Epochs with batch size of 64 takes ~4 minute 30 seconds on a NVIDIA GTX 1080Ti GPU. 
-
-> Image Results
-
-The left is bicubic interpolation image, the middle is high resolution image, and 
-the right is super resolution image(output of the SRGAN).
-
-- BSD100_035(PSNR:32.3980; SSIM:0.8512)
-
-![BSD100_035](images/5.png)
-
-- Set14_011(PSNR:29.5944; SSIM:0.9044)
-
-![Set14_011](images/6.png)
-
-- Set14_014(PSNR:25.1299; SSIM:0.7406)
-
-![Set14_014](images/7.png)
-
-- Urban100_060(PSNR:20.7129; SSIM:0.5263)
-
-![Urban100_060](images/8.png)
-
-> Video Results
-
-The left is bicubic interpolation video, the right is super resolution video(output of the SRGAN).
-
-[![Watch the video](images/video_SRF_4.png)](https://youtu.be/tNR2eiMeoQs)
-
-**Upscale Factor = 8**
-
-Epochs with batch size of 64 takes ~3 minute 30 seconds on a NVIDIA GTX 1080Ti GPU. 
-
-> Image Results
-
-The left is bicubic interpolation image, the middle is high resolution image, and 
-the right is super resolution image(output of the SRGAN).
-
-- SunHays80_027(PSNR:29.4941; SSIM:0.8082)
-
-![SunHays80_027](images/9.png)
-
-- SunHays80_035(PSNR:32.1546; SSIM:0.8449)
-
-![SunHays80_035](images/10.png)
-
-- SunHays80_043(PSNR:30.9716; SSIM:0.8789)
-
-![SunHays80_043](images/11.png)
-
-- SunHays80_078(PSNR:31.9351; SSIM:0.8381)
-
-![SunHays80_078](images/12.png)
-
-> Video Results
-
-The left is bicubic interpolation video, the right is super resolution video(output of the SRGAN).
-
-[![Watch the video](images/video_SRF_8.png)](https://youtu.be/EuvXTKCRr8I)
-
-The complete test results could be downloaded from [here](https://pan.baidu.com/s/1tpi-X6KMrUM15zKTH7f_WQ)(access code:nkh9).
-
+## 接下来可以考虑的地方
+1.如何更有效地利用边缘信息，现有地边缘信息地利用有以下几种：loss中考虑边缘loss；===》将其中的两种结合起来是否可行？
+2.如何提高打板指标：多尺度信息融合、ESA+CA机制？
+3.如何提高ESR：蒸馏？结构重参数化？（只需当成是一个技巧）
+4.改进判别器D网络，因为在我的实验中，D网络在训练了一定的轮次之后（大概80epoch）就失效了
+&emsp;&emsp;**总的来说，目前我的想法是先复现别人引入边缘监督的方法，看看对实际应用是否有帮助，在这之后，考虑结合上”多尺度SR“的方法**
+后面打算复现的文章，网络结构如下
+![d64d1f1ee9bd8dae7f8026613fbfec34.png](:/328573ae4f9246ff80b5c54861ac2aba)
